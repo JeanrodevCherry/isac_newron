@@ -1,0 +1,8 @@
+# Project requirements for imports in src/isac_newron.py
+# NOTE: For PyTorch, prefer following the official install selector for OS/CUDA: https://pytorch.org/get-started/locally/
+# If you don't need a specific CUDA build, pip will try to install a CPU or compatible wheel.
+
+torch
+numpy
+opencv-python
+tqdm
