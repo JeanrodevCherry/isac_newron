@@ -4,3 +4,4 @@ data/images/Plate_A_A2_Region1_Merged_ch00.jpg filter=lfs diff=lfs merge=lfs -te
 data/images/Plate_A_A3_Region1_Merged_ch00.jpg filter=lfs diff=lfs merge=lfs -text
 data/images/Plate_B_A1_Region1_Merged_ch00.jpg filter=lfs diff=lfs merge=lfs -text
 data/images/Plate_B_A3_Region1_Merged_ch00.jpg filter=lfs diff=lfs merge=lfs -text
+pattern_model.pt filter=lfs diff=lfs merge=lfs -text

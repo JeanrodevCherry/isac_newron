@@ -4,6 +4,7 @@ from torch.utils.data import Dataset, DataLoader
 import cv2, glob, os
 import numpy as np
 from tqdm import tqdm
+import tifffile
 
 # -----------------------
 # 1. Tiny U-Net backbone
@@ -39,24 +40,66 @@ class SmallUNet(nn.Module):
 # -----------------------
 # 2. Dataset loader
 # -----------------------
+# class PatternDataset(Dataset):
+#     def __init__(self, img_dir, mask_dir, size=256):
+#         self.img_paths = sorted(glob.glob(os.path.join(img_dir, "*.jpg")))
+#         self.mask_paths = sorted(glob.glob(os.path.join(mask_dir, "*.tif")))
+#         self.size = size
+#         print(self.img_paths)
+#         print(self.mask_paths)
+
+#     def __len__(self):
+#         return len(self.img_paths)
+
+#     def __getitem__(self, i):
+#         img = cv2.imread(self.img_paths[i], cv2.IMREAD_GRAYSCALE)
+#         mask = cv2.imread(self.mask_paths[i], cv2.IMREAD_UNCHANGED)
+#         if mask.ndim == 3:
+#             mask = cv2.cvtColor(mask, cv2.COLOR_BGR2GRAY)
+#         mask = mask.astype(np.float32)
+#         if mask.max() > 1.0:   # normalize if 0–255 or 0–65535
+#             mask /= mask.max()
+#         img = cv2.resize(img, (self.size, self.size))
+#         mask = cv2.resize(mask, (self.size, self.size))
+#         img = torch.from_numpy(img).float().unsqueeze(0) / 255.0
+#         mask = torch.from_numpy(mask).float().unsqueeze(0)
+#         return img, mask
 class PatternDataset(Dataset):
     def __init__(self, img_dir, mask_dir, size=256):
-        self.img_paths = sorted(glob.glob(os.path.join(img_dir, "*")))
-        self.mask_paths = sorted(glob.glob(os.path.join(mask_dir, "*")))
+        self.img_paths = sorted(glob.glob(os.path.join(img_dir, "*.jpg")))
+        self.mask_paths = sorted(glob.glob(os.path.join(mask_dir, "*.tif")))
         self.size = size
 
+        # Map by basename (without "_label" suffix)
+        img_keys = {os.path.splitext(os.path.basename(p))[0]: p for p in self.img_paths}
+        mask_keys = {os.path.splitext(os.path.basename(p))[0].replace("_label", ""): p for p in self.mask_paths}
+        self.pairs = [(img_keys[k], mask_keys[k]) for k in img_keys if k in mask_keys]
+
     def __len__(self):
-        return len(self.img_paths)
+        return len(self.pairs)
 
     def __getitem__(self, i):
-        img = cv2.imread(self.img_paths[i], cv2.IMREAD_GRAYSCALE)
-        mask = cv2.imread(self.mask_paths[i], cv2.IMREAD_GRAYSCALE)
+        img_path, mask_path = self.pairs[i]
+
+        # --- Read JPG ---
+        img = cv2.imread(img_path, cv2.IMREAD_GRAYSCALE)
+
+        # --- Read TIFF mask (float or int) ---
+        mask = tifffile.imread(mask_path)
+        if mask.ndim > 2:
+            mask = mask[..., 0]  # drop extra channels if any
+        mask = mask.astype(np.float32)
+        if mask.max() > 1.0:
+            mask /= mask.max()
+
+        # --- Resize & normalize ---
         img = cv2.resize(img, (self.size, self.size))
         mask = cv2.resize(mask, (self.size, self.size))
-        img = torch.from_numpy(img).float().unsqueeze(0) / 255.0
-        mask = torch.from_numpy(mask).float().unsqueeze(0) / 255.0
-        return img, mask
 
+        img = torch.from_numpy(img).float().unsqueeze(0) / 255.0
+        mask = torch.from_numpy(mask).float().unsqueeze(0)
+
+        return img, mask
 
 # -----------------------
 # 3. Training loop
