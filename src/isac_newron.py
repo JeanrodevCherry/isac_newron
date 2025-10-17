@@ -167,7 +167,7 @@ def train_model(img_dir, mask_dir, epochs=25, lr=1e-3, batch_size=2, model_path=
 #     x1, x2, y1, y2 = xs.min(), xs.max(), ys.min(), ys.max()
 #     cropped = img[y1:y2, x1:x2]
 #     return cropped
-def predict_and_crop(model, image_path, size=256, threshold=0.5, expand_ratio=1.25):
+def predict_and_crop(model, image_path, size=256, threshold=0.5, expand_ratio=1.05):
     """
     Predict mask and crop around the *largest connected region*.
     - Keeps only the largest component.
