@@ -149,23 +149,71 @@ def train_model(img_dir, mask_dir, epochs=25, lr=1e-3, batch_size=2, model_path=
 # -----------------------
 # 4. Inference helper
 # -----------------------
-def predict_and_crop(model, image_path, size=256, threshold=0.5):
+# def predict_and_crop(model, image_path, size=256, threshold=0.5):
+#     img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+#     h, w = img.shape
+#     inp = cv2.resize(img, (size, size))
+#     inp_t = torch.from_numpy(inp).float().unsqueeze(0).unsqueeze(0) / 255.0
+#     with torch.no_grad():
+#         mask = model(inp_t)[0,0].numpy()
+#     mask = cv2.resize(mask, (w, h))
+#     mask_bin = (mask > threshold).astype(np.uint8)
+
+#     # Find bounding box of mask
+#     ys, xs = np.where(mask_bin > 0)
+#     if len(xs) == 0:
+#         print("⚠️ No pattern detected.")
+#         return img
+#     x1, x2, y1, y2 = xs.min(), xs.max(), ys.min(), ys.max()
+#     cropped = img[y1:y2, x1:x2]
+#     return cropped
+def predict_and_crop(model, image_path, size=256, threshold=0.5, expand_ratio=1.25):
+    """
+    Predict mask and crop around the *largest connected region*.
+    - Keeps only the largest component.
+    - Centers a square crop around it.
+    - expand_ratio enlarges crop slightly beyond the detected region.
+    """
+    # --- Load image ---
     img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+    if img is None:
+        raise FileNotFoundError(image_path)
     h, w = img.shape
+
+    # --- Model inference ---
     inp = cv2.resize(img, (size, size))
     inp_t = torch.from_numpy(inp).float().unsqueeze(0).unsqueeze(0) / 255.0
     with torch.no_grad():
-        mask = model(inp_t)[0,0].numpy()
+        mask = model(inp_t)[0, 0].numpy()
     mask = cv2.resize(mask, (w, h))
     mask_bin = (mask > threshold).astype(np.uint8)
 
-    # Find bounding box of mask
-    ys, xs = np.where(mask_bin > 0)
-    if len(xs) == 0:
+    # --- Find connected components ---
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(mask_bin, connectivity=8)
+    if num_labels <= 1:
         print("⚠️ No pattern detected.")
         return img
-    x1, x2, y1, y2 = xs.min(), xs.max(), ys.min(), ys.max()
+
+    # --- Select largest region (ignore background index 0) ---
+    largest_idx = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
+    x, y, bw, bh, area = stats[largest_idx]
+    cx, cy = centroids[largest_idx]
+
+    # --- Compute square crop around the region ---
+    r = int(max(bw, bh) * expand_ratio / 2)
+    cx, cy = int(cx), int(cy)
+    x1 = max(0, cx - r)
+    y1 = max(0, cy - r)
+    x2 = min(w, cx + r)
+    y2 = min(h, cy + r)
     cropped = img[y1:y2, x1:x2]
+
+    # --- Optional: visualize detection region ---
+    # dbg = cv2.cvtColor(img, cv2.COLOR_GRAY2BGR)
+    # cv2.rectangle(dbg, (x1, y1), (x2, y2), (0, 255, 0), 2)
+    # cv2.imshow("Crop", dbg)
+    # cv2.waitKey(0)
+
     return cropped
 
 def show_prediction(model,image_path,size=256,threshold=0.5):
