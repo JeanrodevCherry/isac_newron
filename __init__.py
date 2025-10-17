@@ -2,10 +2,12 @@ import os
 import torch
 import cv2
 from src.isac_newron import train_model, predict_and_crop, SmallUNet, show_prediction
+import argparse
+import sys
 
-def main():
+def main(model_path="pattern_model.pt",image_path="data/images/Plate_A_A2_Region1_Merged_ch00.jpg"):
     # train_model("data/images", "data/masks", epochs=50)
-    predict_one(model_path="pattern_model.pt",image_path="data/images/Plate_A_A2_Region1_Merged_ch00.jpg")
+    predict_one(model_path=model_path,image_path=image_path)
 
 def predict_one(model_path,image_path):
     # if not os.path.exists(model_path):
@@ -22,7 +24,13 @@ def predict_one(model_path,image_path):
     label = show_prediction(model,image_path)
     cv2.imwrite("cropped_result.jpg", crop)
     cv2.imwrite("mask.tif", label)
-    
-    pass
 if __name__=="__main__":
-    main()
+    model_path = "pattern_model.pt"
+    parser = argparse.ArgumentParser("Crazy Cropper with its two newrons")
+    parser.add_argument("-filename",default="data/images/Plate_A_A2_Region1_Merged_ch00.jpg",required=False)
+    args = parser.parse_args()
+
+    if args.filename:
+        main(model_path,args.filename)
+    #     print("ok")
+    #     main()
