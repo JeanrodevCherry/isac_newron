@@ -6,6 +6,8 @@ import numpy as np
 from tqdm import tqdm
 import tifffile
 
+from src.porosity import CompactnessLoss
+
 # -----------------------
 # 1. Tiny U-Net backbone
 # -----------------------
@@ -35,7 +37,21 @@ class SmallUNet(nn.Module):
         d1 = torch.cat([nn.functional.interpolate(d2, scale_factor=2, mode="bilinear"), e1], 1)
         d1 = self.dec1(d1)
         return torch.sigmoid(self.out(d1))
+# ----------------------
 
+class BCEDiceCompactLoss(torch.nn.Module):
+    def __init__(self, smooth=1e-6, compact_weight=0.2):
+        super().__init__()
+        self.bce = torch.nn.BCELoss()
+        self.compact = CompactnessLoss(weight=compact_weight)
+        self.smooth = smooth
+
+    def forward(self, preds, targets):
+        bce = self.bce(preds, targets)
+        intersection = (preds * targets).sum()
+        dice = 1 - (2. * intersection + self.smooth) / (preds.sum() + targets.sum() + self.smooth)
+        comp = self.compact(preds)
+        return bce + dice + comp
 
 # -----------------------
 # 2. Dataset loader
@@ -109,7 +125,8 @@ def train_model(img_dir, mask_dir, epochs=25, lr=1e-3, batch_size=2, model_path=
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
     model = SmallUNet()
-    loss_fn = nn.BCELoss()
+    # loss_fn = nn.BCELoss()
+    loss_fn = BCEDiceCompactLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
     for epoch in range(epochs):
@@ -150,3 +167,18 @@ def predict_and_crop(model, image_path, size=256, threshold=0.5):
     x1, x2, y1, y2 = xs.min(), xs.max(), ys.min(), ys.max()
     cropped = img[y1:y2, x1:x2]
     return cropped
+
+def show_prediction(model,image_path,size=256,threshold=0.5):
+    img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
+    h, w = img.shape
+    inp = cv2.resize(img, (size, size))
+    inp_t = torch.from_numpy(inp).float().unsqueeze(0).unsqueeze(0) / 255.0
+    with torch.no_grad():
+        mask = model(inp_t)[0,0].numpy()
+    mask = cv2.resize(mask, (w, h))
+    mask_bin = (mask > threshold).astype(np.uint8)
+    ys, xs = np.where(mask_bin > 0)
+    if len(xs) == 0:
+        print("⚠️ No pattern detected.")
+        return img
+    return mask_bin
