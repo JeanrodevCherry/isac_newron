@@ -6,3 +6,4 @@ torch
 numpy
 opencv-python
 tqdm
+tifffile
