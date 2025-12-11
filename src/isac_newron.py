@@ -121,6 +121,29 @@ class PatternDataset(Dataset):
 # 3. Training loop
 # -----------------------
 def train_model(img_dir, mask_dir, epochs=25, lr=1e-3, batch_size=2, model_path="pattern_model.pt"):
+    """
+    train_model train model using input data and custom LossFunction
+
+    Parameters
+    ----------
+    img_dir : Path
+        training input dataset folder
+    mask_dir : Path
+        training verification dataset folder
+    epochs : int, optional
+        epochs to perform, by default 25
+    lr : _type_, optional
+        optimizer lr param, by default 1e-3
+    batch_size : int, optional
+        maximum batch size, by default 2
+    model_path : str, optional
+        model checkpoint path, by default "pattern_model.pt"
+
+    Returns
+    -------
+    model
+        SmallUnet type model
+    """
     dataset = PatternDataset(img_dir, mask_dir)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 

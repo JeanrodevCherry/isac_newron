@@ -34,5 +34,3 @@ if __name__=="__main__":
 
     if args.filename:
         main(model_path,args.filename)
-    #     print("ok")
-    #     main()
