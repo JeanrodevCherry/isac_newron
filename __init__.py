@@ -6,7 +6,7 @@ import argparse
 import sys
 
 def main(model_path="pattern_model.pt",image_path="data/images/Plate_A_A2_Region1_Merged_ch00.jpg"):
-    # train_model("data/images", "data/masks", epochs=50)
+    train_model("data/images", "data/masks", epochs=50)
     predict_one(model_path=model_path,image_path=image_path)
 
 def predict_one(model_path,image_path):

@@ -7,7 +7,8 @@ from tqdm import tqdm
 import tifffile
 
 from src.porosity import CompactnessLoss
-
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Using device: {device}")
 # -----------------------
 # 1. Tiny U-Net backbone
 # -----------------------
@@ -124,7 +125,7 @@ def train_model(img_dir, mask_dir, epochs=25, lr=1e-3, batch_size=2, model_path=
     dataset = PatternDataset(img_dir, mask_dir)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
-    model = SmallUNet()
+    model = SmallUNet().to(device)
     # loss_fn = nn.BCELoss()
     loss_fn = BCEDiceCompactLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
@@ -133,6 +134,7 @@ def train_model(img_dir, mask_dir, epochs=25, lr=1e-3, batch_size=2, model_path=
         model.train()
         total = 0
         for x, y in tqdm(loader, desc=f"Epoch {epoch+1}/{epochs}"):
+            x, y = x.to(device), y.to(device) 
             pred = model(x)
             loss = loss_fn(pred, y)
             optimizer.zero_grad()

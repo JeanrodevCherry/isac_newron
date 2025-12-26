@@ -50,3 +50,10 @@ data/masks/Plate_A_A1_Region1_Merged_ch00_label.tif filter=lfs diff=lfs merge=lf
 data/masks/Plate_B_A1[[:space:]]Region1_Merged_ch01_label.tif filter=lfs diff=lfs merge=lfs -text
 data/masks/Plate_B_A3_Region1_Merged_ch00_label.tif filter=lfs diff=lfs merge=lfs -text
 data/masks/Plate_E_A1_Region1_Merged_ch00_label.tif filter=lfs diff=lfs merge=lfs -text
+data/images/D01_ID215_Organoids_B1[[:space:]]Region1_Merged_ch00.jpg filter=lfs diff=lfs merge=lfs -text
+data/masks/D14_ADSC[[:space:]]organoids_26092025_A_A1_Merged_ch00_SV_label.tif filter=lfs diff=lfs merge=lfs -text
+data/masks/D01_ID215_Organoids_B1[[:space:]]Region1_Merged_ch00_label.tif filter=lfs diff=lfs merge=lfs -text
+data/masks/D01_ID215_Organoids_A1[[:space:]]Region1_Merged_ch00_label.tif filter=lfs diff=lfs merge=lfs -text
+data/images/D01_ID215_Organoids_A1[[:space:]]Region1_Merged_ch00.jpg filter=lfs diff=lfs merge=lfs -text
+data/images/D14_ADSC[[:space:]]organoids_26092025_A_A1_Merged_ch00_SV.jpg filter=lfs diff=lfs merge=lfs -text
+pattern_model_save.pt filter=lfs diff=lfs merge=lfs -text
