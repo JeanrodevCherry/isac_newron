@@ -6,7 +6,7 @@ import argparse
 import sys
 
 def main(model_path="pattern_model.pt",image_path="data/images/Plate_A_A2_Region1_Merged_ch00.jpg"):
-    train_model("data/images", "data/masks", epochs=50)
+    # train_model("data/images", "data/masks", epochs=50)
     predict_one(model_path=model_path,image_path=image_path)
 
 def predict_one(model_path,image_path):
@@ -27,7 +27,7 @@ def predict_one(model_path,image_path):
 if __name__=="__main__":
     model_path = "pattern_model.pt"
     parser = argparse.ArgumentParser("Crazy Cropper with its two newrons")
-    parser.add_argument("-filename",default="data/images/Plate_A_A2_Region1_Merged_ch00.jpg",required=False)
+    parser.add_argument("-filename",default="data/images/D01_ID215_Organoids_B1 Region1_Merged_ch00.jpg",required=False)
     args = parser.parse_args()
 
     if args.filename:

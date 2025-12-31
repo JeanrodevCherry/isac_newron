@@ -1,3 +1,5 @@
 src/__pycache__/
 .env
 /venv
+cropped_result.jpg
+mask.tif
