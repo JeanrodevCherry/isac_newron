@@ -1,0 +1,29 @@
+services:
+  isaac:
+    image: jeanrodev/isaacapp:latest
+    # build:
+    #   context: .
+    #   dockerfile: ./Dockerfile
+    deploy:
+      replicas: 2
+    volumes:
+      - smb_volume:/app/models
+    command: >
+      bash -c "python3 ./__init__.py --training --epoch 2"
+
+# volumes:
+#   model_data: # Defaults to local driver
+volumes:
+  smb_volume:
+    driver: local
+    driver_opts:
+      type: cifs
+      device: //192.168.0.200/SharedFolder  # e.g., //192.168.1.100/isac_data
+      o: username=jpeiteado,password_file=/run/secrets/smb_password,vers=3.0  # Use secret for password
+networks:
+  app_net:
+    driver: overlay
+
+secrets:
+  smb_password:
+    external: true  # Use the pre-created secret
