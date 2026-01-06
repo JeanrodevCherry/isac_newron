@@ -28,9 +28,14 @@ if __name__=="__main__":
     model_path = "pattern_model.pt"
     parser = argparse.ArgumentParser("Crazy Cropper with its two newrons")
     parser.add_argument("-filename",default="data/images/D01_ID215_Organoids_B1 Region1_Merged_ch00.jpg",required=False)
+    parser.add_argument("--training",action="store_true",required=False)
+    parser.add_argument("--epochs",default=50,required=False)
     args = parser.parse_args()
 
+    if args.training:
+        if args.epochs:
+            epochs = int(args.epochs)
+        train_model("data/images", "data/masks", epochs=epochs)
     if args.filename:
         main(model_path,args.filename)
-    #     print("ok")
-    #     main()
+
