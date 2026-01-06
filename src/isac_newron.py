@@ -40,6 +40,92 @@ class SmallUNet(nn.Module):
         return torch.sigmoid(self.out(d1))
 # ----------------------
 
+
+class SingleHexagonLoss(torch.nn.Module):
+    def __init__(self, weight=1.0, target_size=128):
+        super().__init__()
+        self.weight = weight
+        self.ideal_ratio = 4.51  # (perimeter²/area for regular hexagon)
+        self.hex_template = self._create_hexagon_template(target_size)
+
+    def forward(self, preds):
+        batch_loss = 0.0
+        for pred in preds:
+            binary = (pred > 0.5).float()
+
+            # Penalize multiple components
+            multi_comp_loss = self._single_component_loss(binary)
+
+            # Penalize non-hexagonal geometry
+            geometry_loss = self._hexagon_geometry_loss(binary)
+
+            # Template matching
+            template_loss = self._template_matching_loss(binary)
+
+            batch_loss += multi_comp_loss + geometry_loss + template_loss
+
+        return self.weight * batch_loss / len(preds)
+
+    def _single_component_loss(self, binary):
+        labeled = label(binary.squeeze().cpu().numpy())
+        num_components = len(np.unique(labeled)) - 1
+        return torch.tensor(max(0, num_components - 1)).float().to(binary.device)
+
+    def _hexagon_geometry_loss(self, binary):
+        area = torch.sum(binary)
+        perimeter = self._calculate_perimeter(binary)
+        if area < 1e-6:
+            return torch.tensor(0.0).to(binary.device)
+        compactness = (perimeter**2) / (area + 1e-6)
+        return torch.abs(compactness - self.ideal_ratio)
+
+    def _template_matching_loss(self, binary):
+        conv = F.conv2d(binary, self.hex_template.to(binary.device), padding='same')
+        return 1.0 - conv.mean()
+
+    def _calculate_perimeter(self, binary):
+        sobel_x = torch.tensor([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]], dtype=torch.float32).view(1, 1, 3, 3)
+        sobel_y = torch.tensor([[-1, -2, -1], [0, 0, 0], [1, 2, 1]], dtype=torch.float32).view(1, 1, 3, 3)
+        grad_x = F.conv2d(binary, sobel_x.to(binary.device), padding=1)
+        grad_y = F.conv2d(binary, sobel_y.to(binary.device), padding=1)
+        edges = torch.sqrt(grad_x**2 + grad_y**2)
+        return torch.sum(edges > 0.5).float()
+
+    def _create_hexagon_template(self, size):
+        center = size // 2
+        y, x = torch.meshgrid(torch.arange(size), torch.arange(size))
+        hex_mask = (
+            torch.abs(x - center) +
+            torch.abs(y - center) +
+            torch.abs(x + y - 2*center) <= size/2
+        )
+        return hex_mask.float().view(1, 1, size, size)
+
+# --- Combined Loss ---
+class BCEDiceCompactHexagonLoss(torch.nn.Module):
+    def __init__(self, smooth=1e-6, compact_weight=0.2, hexagon_weight=0.5, target_size=128):
+        super().__init__()
+        self.bce = torch.nn.BCELoss()
+        self.smooth = smooth
+        self.compact_weight = compact_weight
+        self.hexagon_weight = hexagon_weight
+        self.compact = CompactnessLoss(weight=compact_weight)
+        self.hexagon_loss = SingleHexagonLoss(weight=1.0, target_size=target_size)
+
+    def forward(self, preds, targets):
+        # Standard losses
+        bce = self.bce(preds, targets)
+        intersection = (preds * targets).sum()
+        dice = 1 - (2. * intersection + self.smooth) / (preds.sum() + targets.sum() + self.smooth)
+
+        # Compactness and hexagon losses (preds-only)
+        comp = self.compact(preds)
+        hex_loss = self.hexagon_loss(preds)
+
+        # Weighted combination
+        total_loss = bce + dice + self.compact_weight * comp + self.hexagon_weight * hex_loss
+        return total_loss
+
 class BCEDiceCompactLoss(torch.nn.Module):
     def __init__(self, smooth=1e-6, compact_weight=0.2):
         super().__init__()
@@ -127,7 +213,9 @@ def train_model(img_dir, mask_dir, epochs=25, lr=1e-3, batch_size=2, model_path=
 
     model = SmallUNet().to(device)
     # loss_fn = nn.BCELoss()
-    loss_fn = BCEDiceCompactLoss()
+    # loss_fn = BCEDiceCompactLoss()
+    # loss_fn = HexagonalBCEDiceLoss()
+    loss_fn = BCEDiceCompactHexagonLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
     for epoch in range(epochs):
