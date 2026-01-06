@@ -54,6 +54,56 @@ class BCEDiceCompactLoss(torch.nn.Module):
         comp = self.compact(preds)
         return bce + dice + comp
 
+class BCETverskyBoundaryCompactLoss(torch.nn.Module):
+    def __init__(
+        self,
+        alpha=0.75,          # FP penalty
+        beta=0.25,
+        smooth=1e-6,
+        compact_weight=0.1,
+        boundary_weight=0.5,
+        area_weight=0.2
+    ):
+        super().__init__()
+        self.bce = nn.BCELoss()
+        self.compact = CompactnessLoss(weight=compact_weight)
+        self.alpha = alpha
+        self.beta = beta
+        self.smooth = smooth
+        self.boundary_weight = boundary_weight
+        self.area_weight = area_weight
+
+    def tversky(self, preds, targets):
+        tp = (preds * targets).sum()
+        fp = (preds * (1 - targets)).sum()
+        fn = ((1 - preds) * targets).sum()
+
+        return 1 - (tp + self.smooth) / (
+            tp + self.alpha * fp + self.beta * fn + self.smooth
+        )
+
+    def boundary_loss(self, preds):
+        dx = torch.abs(preds[..., :, :-1] - preds[..., :, 1:])
+        dy = torch.abs(preds[..., :-1, :] - preds[..., 1:, :])
+        return dx.mean() + dy.mean()
+
+    def area_loss(self, preds, targets):
+        return torch.abs(preds.sum() - targets.sum()) / (targets.sum() + 1e-6)
+
+    def forward(self, preds, targets):
+        bce = self.bce(preds, targets)
+        tv = self.tversky(preds, targets)
+        boundary = self.boundary_loss(preds)
+        area = self.area_loss(preds, targets)
+        comp = self.compact(preds)
+
+        return (
+            bce
+            + tv
+            + self.boundary_weight * boundary
+            + self.area_weight * area
+            + comp
+        )
 # -----------------------
 # 2. Dataset loader
 # -----------------------
@@ -127,7 +177,8 @@ def train_model(img_dir, mask_dir, epochs=25, lr=1e-3, batch_size=2, model_path=
 
     model = SmallUNet().to(device)
     # loss_fn = nn.BCELoss()
-    loss_fn = BCEDiceCompactLoss()
+    # loss_fn = BCEDiceCompactLoss()
+    loss_fn = BCETverskyBoundaryCompactLoss()
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
 
     for epoch in range(epochs):
