@@ -5,8 +5,20 @@ import cv2, glob, os
 import numpy as np
 from tqdm import tqdm
 import tifffile
+from datetime import datetime, timezone
 
-from src.porosity import CompactnessLoss
+from src.porosity import BCETverskyBoundaryNoHoleLoss
+
+
+def extract_state_dict(loaded_checkpoint):
+    """
+    Backward-compatible extractor:
+    - old format: plain state_dict
+    - new format: checkpoint dict with model_state_dict
+    """
+    if isinstance(loaded_checkpoint, dict) and "model_state_dict" in loaded_checkpoint:
+        return loaded_checkpoint["model_state_dict"]
+    return loaded_checkpoint
 
 # -----------------------
 # 1. Tiny U-Net backbone
@@ -36,22 +48,20 @@ class SmallUNet(nn.Module):
         d2 = self.dec2(d2)
         d1 = torch.cat([nn.functional.interpolate(d2, scale_factor=2, mode="bilinear"), e1], 1)
         d1 = self.dec1(d1)
-        return torch.sigmoid(self.out(d1))
+        return self.out(d1)
 # ----------------------
 
-class BCEDiceCompactLoss(torch.nn.Module):
-    def __init__(self, smooth=1e-6, compact_weight=0.2):
+class BoundaryAwareSegLoss(torch.nn.Module):
+    def __init__(self):
         super().__init__()
-        self.bce = torch.nn.BCELoss()
-        self.compact = CompactnessLoss(weight=compact_weight)
-        self.smooth = smooth
+        self.loss = BCETverskyBoundaryNoHoleLoss(
+            tversky_weight=1.0,
+            boundary_weight=1.2,
+            no_hole_weight=1.8,
+        )
 
     def forward(self, preds, targets):
-        bce = self.bce(preds, targets)
-        intersection = (preds * targets).sum()
-        dice = 1 - (2. * intersection + self.smooth) / (preds.sum() + targets.sum() + self.smooth)
-        comp = self.compact(preds)
-        return bce + dice + comp
+        return self.loss(preds, targets)
 
 # -----------------------
 # 2. Dataset loader
@@ -81,10 +91,11 @@ class BCEDiceCompactLoss(torch.nn.Module):
 #         mask = torch.from_numpy(mask).float().unsqueeze(0)
 #         return img, mask
 class PatternDataset(Dataset):
-    def __init__(self, img_dir, mask_dir, size=256):
+    def __init__(self, img_dir, mask_dir, size=256, augment=False):
         self.img_paths = sorted(glob.glob(os.path.join(img_dir, "*.jpg")))
         self.mask_paths = sorted(glob.glob(os.path.join(mask_dir, "*.tif")))
         self.size = size
+        self.augment = augment
 
         # Map by basename (without "_label" suffix)
         img_keys = {os.path.splitext(os.path.basename(p))[0]: p for p in self.img_paths}
@@ -93,6 +104,50 @@ class PatternDataset(Dataset):
 
     def __len__(self):
         return len(self.pairs)
+
+    def _augment_pair(self, img, mask):
+        if np.random.rand() < 0.5:
+            img = cv2.flip(img, 1)
+            mask = cv2.flip(mask, 1)
+        if np.random.rand() < 0.5:
+            img = cv2.flip(img, 0)
+            mask = cv2.flip(mask, 0)
+
+        if np.random.rand() < 0.5:
+            k = np.random.randint(0, 4)
+            img = np.rot90(img, k).copy()
+            mask = np.rot90(mask, k).copy()
+
+        if np.random.rand() < 0.5:
+            angle = np.random.uniform(-35.0, 35.0)
+            center = (self.size / 2.0, self.size / 2.0)
+            matrix = cv2.getRotationMatrix2D(center, angle, 1.0)
+            img = cv2.warpAffine(
+                img,
+                matrix,
+                (self.size, self.size),
+                flags=cv2.INTER_LINEAR,
+                borderMode=cv2.BORDER_REFLECT_101,
+            )
+            mask = cv2.warpAffine(
+                mask,
+                matrix,
+                (self.size, self.size),
+                flags=cv2.INTER_NEAREST,
+                borderMode=cv2.BORDER_CONSTANT,
+                borderValue=0,
+            )
+
+        if np.random.rand() < 0.8:
+            alpha = np.random.uniform(0.8, 1.25)
+            beta = np.random.uniform(-22.0, 22.0)
+            img = np.clip(img.astype(np.float32) * alpha + beta, 0, 255)
+
+        if np.random.rand() < 0.4:
+            gamma = np.random.uniform(0.75, 1.35)
+            img = np.clip(((img / 255.0) ** gamma) * 255.0, 0, 255)
+
+        return img.astype(np.uint8), mask.astype(np.float32)
 
     def __getitem__(self, i):
         img_path, mask_path = self.pairs[i]
@@ -109,8 +164,13 @@ class PatternDataset(Dataset):
             mask /= mask.max()
 
         # --- Resize & normalize ---
-        img = cv2.resize(img, (self.size, self.size))
-        mask = cv2.resize(mask, (self.size, self.size))
+        img = cv2.resize(img, (self.size, self.size), interpolation=cv2.INTER_LINEAR)
+        mask = cv2.resize(mask, (self.size, self.size), interpolation=cv2.INTER_NEAREST)
+
+        if self.augment:
+            img, mask = self._augment_pair(img, mask)
+
+        mask = (mask > 0.5).astype(np.float32)
 
         img = torch.from_numpy(img).float().unsqueeze(0) / 255.0
         mask = torch.from_numpy(mask).float().unsqueeze(0)
@@ -120,7 +180,16 @@ class PatternDataset(Dataset):
 # -----------------------
 # 3. Training loop
 # -----------------------
-def train_model(img_dir, mask_dir, epochs=25, lr=1e-3, batch_size=2, model_path="pattern_model.pt"):
+def train_model(
+    img_dir,
+    mask_dir,
+    epochs=25,
+    lr=1e-2,
+    batch_size=2,
+    model_path="pattern_model.pt",
+    augment=True,
+    device=None,
+):
     """
     train_model train model using input data and custom LossFunction
 
@@ -133,39 +202,117 @@ def train_model(img_dir, mask_dir, epochs=25, lr=1e-3, batch_size=2, model_path=
     epochs : int, optional
         epochs to perform, by default 25
     lr : _type_, optional
-        optimizer lr param, by default 1e-3
+        optimizer lr param, by default 1e-2
     batch_size : int, optional
         maximum batch size, by default 2
     model_path : str, optional
         model checkpoint path, by default "pattern_model.pt"
+    augment : bool, optional
+        apply illumination/orientation augmentations, by default True
+    device : str or torch.device, optional
+        training device. If None, uses CUDA when available, otherwise CPU
 
     Returns
     -------
     model
         SmallUnet type model
     """
-    dataset = PatternDataset(img_dir, mask_dir)
-    loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    else:
+        device = torch.device(device)
 
-    model = SmallUNet()
-    # loss_fn = nn.BCELoss()
-    loss_fn = BCEDiceCompactLoss()
+    use_cuda = device.type == "cuda"
+    if use_cuda:
+        torch.backends.cudnn.benchmark = True
+
+    dataset = PatternDataset(img_dir, mask_dir, augment=augment)
+    loader = DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        pin_memory=use_cuda,
+    )
+
+    model = SmallUNet().to(device)
+    loss_fn = BoundaryAwareSegLoss().to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    scaler = torch.amp.GradScaler("cuda", enabled=use_cuda) if use_cuda else None
+
+    lr_drop_epoch = 50
+    lr_after_drop = 1e-3
+
+    print(f"🚀 Training device: {device}")
+    epoch_losses = []
 
     for epoch in range(epochs):
+        if epoch == lr_drop_epoch:
+            for param_group in optimizer.param_groups:
+                param_group["lr"] = lr_after_drop
+            print(f"🔁 Learning rate changed to {lr_after_drop} at epoch {epoch+1}")
+
         model.train()
         total = 0
         for x, y in tqdm(loader, desc=f"Epoch {epoch+1}/{epochs}"):
-            pred = model(x)
-            loss = loss_fn(pred, y)
-            optimizer.zero_grad()
-            loss.backward()
-            optimizer.step()
-            total += loss.item() * x.size(0)
-        print(f"Loss: {total / len(loader.dataset):.4f}")
+            x = x.to(device, non_blocking=use_cuda)
+            y = y.to(device, non_blocking=use_cuda)
 
-    torch.save(model.state_dict(), model_path)
+            optimizer.zero_grad()
+
+            if use_cuda:
+                with torch.amp.autocast(device_type="cuda", enabled=True):
+                    pred = model(x)
+                    loss = loss_fn(pred, y)
+
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                pred = model(x)
+                loss = loss_fn(pred, y)
+                loss.backward()
+                optimizer.step()
+
+            total += loss.item() * x.size(0)
+        epoch_loss = total / len(loader.dataset)
+        epoch_losses.append(float(epoch_loss))
+        print(f"Loss: {epoch_loss:.4f}")
+
+    best_loss = min(epoch_losses)
+    best_epoch = int(np.argmin(epoch_losses) + 1)
+    last_k = min(5, len(epoch_losses))
+    mean_last_k = float(np.mean(epoch_losses[-last_k:]))
+
+    checkpoint = {
+        "model_state_dict": model.state_dict(),
+        "training_quality": {
+            "epoch_losses": epoch_losses,
+            "final_train_loss": float(epoch_losses[-1]),
+            "best_train_loss": float(best_loss),
+            "best_epoch": best_epoch,
+            "mean_last5_train_loss": mean_last_k,
+            "epochs": int(epochs),
+            "dataset_size": int(len(dataset)),
+        },
+        "train_config": {
+            "lr": float(lr),
+            "lr_drop_epoch": int(lr_drop_epoch),
+            "lr_after_drop": float(lr_after_drop),
+            "batch_size": int(batch_size),
+            "augment": bool(augment),
+            "device": str(device),
+            "loss": "BCETverskyBoundaryNoHoleLoss",
+        },
+        "saved_at_utc": datetime.now(timezone.utc).isoformat(),
+    }
+
+    torch.save(checkpoint, model_path)
     print(f"✅ Model saved to {model_path}")
+    print(
+        f"📊 Quality -> final: {epoch_losses[-1]:.4f}, "
+        f"best: {best_loss:.4f} (epoch {best_epoch}), "
+        f"mean_last5: {mean_last_k:.4f}"
+    )
     return model
 
 
@@ -205,9 +352,11 @@ def predict_and_crop(model, image_path, size=256, threshold=0.5, expand_ratio=1.
 
     # --- Model inference ---
     inp = cv2.resize(img, (size, size))
-    inp_t = torch.from_numpy(inp).float().unsqueeze(0).unsqueeze(0) / 255.0
+    device = next(model.parameters()).device
+    inp_t = (torch.from_numpy(inp).float().unsqueeze(0).unsqueeze(0) / 255.0).to(device)
     with torch.no_grad():
-        mask = model(inp_t)[0, 0].numpy()
+        logits = model(inp_t)
+        mask = torch.sigmoid(logits)[0, 0].detach().cpu().numpy()
     mask = cv2.resize(mask, (w, h))
     mask_bin = (mask > threshold).astype(np.uint8)
 
@@ -255,9 +404,11 @@ def parse_image(model, image_path, size=256, threshold=0.5, expand_ratio=1.05):
 
     # --- Model inference ---
     inp = cv2.resize(img, (size, size))
-    inp_t = torch.from_numpy(inp).float().unsqueeze(0).unsqueeze(0) / 255.0
+    device = next(model.parameters()).device
+    inp_t = (torch.from_numpy(inp).float().unsqueeze(0).unsqueeze(0) / 255.0).to(device)
     with torch.no_grad():
-        mask = model(inp_t)[0, 0].numpy()
+        logits = model(inp_t)
+        mask = torch.sigmoid(logits)[0, 0].detach().cpu().numpy()
     mask = cv2.resize(mask, (w, h))
     mask_bin = (mask > threshold).astype(np.uint8)
 
@@ -287,9 +438,11 @@ def show_prediction(model,image_path,size=256,threshold=0.5):
     img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
     h, w = img.shape
     inp = cv2.resize(img, (size, size))
-    inp_t = torch.from_numpy(inp).float().unsqueeze(0).unsqueeze(0) / 255.0
+    device = next(model.parameters()).device
+    inp_t = (torch.from_numpy(inp).float().unsqueeze(0).unsqueeze(0) / 255.0).to(device)
     with torch.no_grad():
-        mask = model(inp_t)[0,0].numpy()
+        logits = model(inp_t)
+        mask = torch.sigmoid(logits)[0,0].detach().cpu().numpy()
     mask = cv2.resize(mask, (w, h))
     mask_bin = (mask > threshold).astype(np.uint8)
     ys, xs = np.where(mask_bin > 0)
