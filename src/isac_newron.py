@@ -5,8 +5,8 @@ import cv2, glob, os
 import numpy as np
 from tqdm import tqdm
 import tifffile
-
 from src.porosity import CompactnessLoss
+
 
 # -----------------------
 # 1. Tiny U-Net backbone
@@ -14,12 +14,14 @@ from src.porosity import CompactnessLoss
 class SmallUNet(nn.Module):
     def __init__(self):
         super().__init__()
+
         def conv_bn(in_ch, out_ch):
             return nn.Sequential(
                 nn.Conv2d(in_ch, out_ch, 3, padding=1),
                 nn.BatchNorm2d(out_ch),
                 nn.ReLU(inplace=True),
             )
+
         self.enc1 = conv_bn(1, 16)
         self.enc2 = conv_bn(16, 32)
         self.enc3 = conv_bn(32, 64)
@@ -32,12 +34,27 @@ class SmallUNet(nn.Module):
         e1 = self.enc1(x)
         e2 = self.enc2(self.pool(e1))
         e3 = self.enc3(self.pool(e2))
-        d2 = torch.cat([nn.functional.interpolate(e3, scale_factor=2, mode="bilinear"), e2], 1)
+        d2 = torch.cat(
+            [
+                nn.functional.interpolate(e3, scale_factor=2, mode="bilinear"),
+                e2,
+            ],
+            1,
+        )
         d2 = self.dec2(d2)
-        d1 = torch.cat([nn.functional.interpolate(d2, scale_factor=2, mode="bilinear"), e1], 1)
+        d1 = torch.cat(
+            [
+                nn.functional.interpolate(d2, scale_factor=2, mode="bilinear"),
+                e1,
+            ],
+            1,
+        )
         d1 = self.dec1(d1)
         return torch.sigmoid(self.out(d1))
+
+
 # ----------------------
+
 
 class BCEDiceCompactLoss(torch.nn.Module):
     def __init__(self, smooth=1e-6, compact_weight=0.2):
@@ -49,9 +66,12 @@ class BCEDiceCompactLoss(torch.nn.Module):
     def forward(self, preds, targets):
         bce = self.bce(preds, targets)
         intersection = (preds * targets).sum()
-        dice = 1 - (2. * intersection + self.smooth) / (preds.sum() + targets.sum() + self.smooth)
+        dice = 1 - (2.0 * intersection + self.smooth) / (
+            preds.sum() + targets.sum() + self.smooth
+        )
         comp = self.compact(preds)
         return bce + dice + comp
+
 
 # -----------------------
 # 2. Dataset loader
@@ -66,6 +86,7 @@ class BCEDiceCompactLoss(torch.nn.Module):
 
 #     def __len__(self):
 #         return len(self.img_paths)
+
 
 #     def __getitem__(self, i):
 #         img = cv2.imread(self.img_paths[i], cv2.IMREAD_GRAYSCALE)
@@ -87,9 +108,16 @@ class PatternDataset(Dataset):
         self.size = size
 
         # Map by basename (without "_label" suffix)
-        img_keys = {os.path.splitext(os.path.basename(p))[0]: p for p in self.img_paths}
-        mask_keys = {os.path.splitext(os.path.basename(p))[0].replace("_label", ""): p for p in self.mask_paths}
-        self.pairs = [(img_keys[k], mask_keys[k]) for k in img_keys if k in mask_keys]
+        img_keys = {
+            os.path.splitext(os.path.basename(p))[0]: p for p in self.img_paths
+        }
+        mask_keys = {
+            os.path.splitext(os.path.basename(p))[0].replace("_label", ""): p
+            for p in self.mask_paths
+        }
+        self.pairs = [
+            (img_keys[k], mask_keys[k]) for k in img_keys if k in mask_keys
+        ]
 
     def __len__(self):
         return len(self.pairs)
@@ -117,10 +145,18 @@ class PatternDataset(Dataset):
 
         return img, mask
 
+
 # -----------------------
 # 3. Training loop
 # -----------------------
-def train_model(img_dir, mask_dir, epochs=25, lr=1e-3, batch_size=2, model_path="pattern_model.pt"):
+def train_model(
+    img_dir,
+    mask_dir,
+    epochs=25,
+    lr=1e-3,
+    batch_size=2,
+    model_path="pattern_model.pt",
+):
     """
     train_model train model using input data and custom LossFunction
 
@@ -182,6 +218,7 @@ def train_model(img_dir, mask_dir, epochs=25, lr=1e-3, batch_size=2, model_path=
 #     mask = cv2.resize(mask, (w, h))
 #     mask_bin = (mask > threshold).astype(np.uint8)
 
+
 #     # Find bounding box of mask
 #     ys, xs = np.where(mask_bin > 0)
 #     if len(xs) == 0:
@@ -190,7 +227,9 @@ def train_model(img_dir, mask_dir, epochs=25, lr=1e-3, batch_size=2, model_path=
 #     x1, x2, y1, y2 = xs.min(), xs.max(), ys.min(), ys.max()
 #     cropped = img[y1:y2, x1:x2]
 #     return cropped
-def predict_and_crop(model, image_path, size=256, threshold=0.5, expand_ratio=1.05):
+def predict_and_crop(
+    model, image_path, size=256, threshold=0.5, expand_ratio=1.05
+):
     """
     Predict mask and crop around the *largest connected region*.
     - Keeps only the largest component.
@@ -212,7 +251,9 @@ def predict_and_crop(model, image_path, size=256, threshold=0.5, expand_ratio=1.
     mask_bin = (mask > threshold).astype(np.uint8)
 
     # --- Find connected components ---
-    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(mask_bin, connectivity=8)
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
+        mask_bin, connectivity=8
+    )
     if num_labels <= 1:
         print("⚠️ No pattern detected.")
         return img
@@ -231,6 +272,8 @@ def predict_and_crop(model, image_path, size=256, threshold=0.5, expand_ratio=1.
     y2 = min(h, cy + r)
     cropped = img[y1:y2, x1:x2]
     return cropped
+
+
 def parse_image(model, image_path, size=256, threshold=0.5, expand_ratio=1.05):
     """
     Predict mask and crop around the *largest connected region*.
@@ -262,34 +305,39 @@ def parse_image(model, image_path, size=256, threshold=0.5, expand_ratio=1.05):
     mask_bin = (mask > threshold).astype(np.uint8)
 
     # --- Find connected components ---
-    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(mask_bin, connectivity=8)
+    num_labels, labels, stats, centroids = cv2.connectedComponentsWithStats(
+        mask_bin, connectivity=8
+    )
     if num_labels <= 1:
         print("⚠️ No pattern detected.")
         return img
 
-    # --- Select largest region (ignore background index 0) ---
-    largest_idx = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
-    x, y, bw, bh, area = stats[largest_idx]
-    cx, cy = centroids[largest_idx]
+    # # --- Select largest region (ignore background index 0) ---
+    # largest_idx = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
+    # x, y, bw, bh, area = stats[largest_idx]
+    # cx, cy = centroids[largest_idx]
 
-    # --- Compute square crop around the region ---
-    r = int(max(bw, bh) * expand_ratio / 2)
-    cx, cy = int(cx), int(cy)
-    x1 = max(0, cx - r)
-    y1 = max(0, cy - r)
-    x2 = min(w, cx + r)
-    y2 = min(h, cy + r)
-    cropped = img[y1:y2, x1:x2]
-    cropped_mask = mask[y1:y2, x1:x2]
-    # return cropped,invert_mask(cropped_mask)
-    return cropped, cropped_mask
-def show_prediction(model,image_path,size=256,threshold=0.5):
+    # # --- Compute square crop around the region ---
+    # r = int(max(bw, bh) * expand_ratio / 2)
+    # cx, cy = int(cx), int(cy)
+    # x1 = max(0, cx - r)
+    # y1 = max(0, cy - r)
+    # x2 = min(w, cx + r)
+    # y2 = min(h, cy + r)
+    # cropped = img[y1:y2, x1:x2]
+    # cropped_mask = mask[y1:y2, x1:x2]
+    # # return cropped,invert_mask(cropped_mask)
+    # return cropped, cropped_mask
+    return labels
+
+
+def show_prediction(model, image_path, size=256, threshold=0.5):
     img = cv2.imread(image_path, cv2.IMREAD_GRAYSCALE)
     h, w = img.shape
     inp = cv2.resize(img, (size, size))
     inp_t = torch.from_numpy(inp).float().unsqueeze(0).unsqueeze(0) / 255.0
     with torch.no_grad():
-        mask = model(inp_t)[0,0].numpy()
+        mask = model(inp_t)[0, 0].numpy()
     mask = cv2.resize(mask, (w, h))
     mask_bin = (mask > threshold).astype(np.uint8)
     ys, xs = np.where(mask_bin > 0)
@@ -297,6 +345,7 @@ def show_prediction(model,image_path,size=256,threshold=0.5):
         print("⚠️ No pattern detected.")
         return img
     return invert_mask(mask_bin)
+
 
 def invert_mask(mask):
     """
@@ -313,6 +362,6 @@ def invert_mask(mask):
         Binary -> Invert over 1 - 0
         0 - 255 -> Invert intensity
     """
-    if mask.max() >1:
+    if mask.max() > 1:
         return (255 - mask).astype(mask.dtype)
     return (1 - mask).astype(mask.dtype)
