@@ -274,7 +274,7 @@ def predict_and_crop(
     return cropped
 
 
-def parse_image(model, image_path, size=256, threshold=0.5, expand_ratio=1.05):
+def parse_image(model, image_path, size=256, threshold=0.5, expand_ratio=1.05,model_type="cropper"):
     """
     Predict mask and crop around the *largest connected region*.
     - Keeps only the largest component.
@@ -311,24 +311,25 @@ def parse_image(model, image_path, size=256, threshold=0.5, expand_ratio=1.05):
     if num_labels <= 1:
         print("⚠️ No pattern detected.")
         return img
+    if model_type=="cropper":
+        # --- Select largest region (ignore background index 0) ---
+        largest_idx = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
+        x, y, bw, bh, area = stats[largest_idx]
+        cx, cy = centroids[largest_idx]
 
-    # # --- Select largest region (ignore background index 0) ---
-    # largest_idx = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
-    # x, y, bw, bh, area = stats[largest_idx]
-    # cx, cy = centroids[largest_idx]
-
-    # # --- Compute square crop around the region ---
-    # r = int(max(bw, bh) * expand_ratio / 2)
-    # cx, cy = int(cx), int(cy)
-    # x1 = max(0, cx - r)
-    # y1 = max(0, cy - r)
-    # x2 = min(w, cx + r)
-    # y2 = min(h, cy + r)
-    # cropped = img[y1:y2, x1:x2]
-    # cropped_mask = mask[y1:y2, x1:x2]
-    # # return cropped,invert_mask(cropped_mask)
-    # return cropped, cropped_mask
-    return labels
+        # --- Compute square crop around the region ---
+        r = int(max(bw, bh) * expand_ratio / 2)
+        cx, cy = int(cx), int(cy)
+        x1 = max(0, cx - r)
+        y1 = max(0, cy - r)
+        x2 = min(w, cx + r)
+        y2 = min(h, cy + r)
+        cropped = img[y1:y2, x1:x2]
+        cropped_mask = mask[y1:y2, x1:x2]
+        # return cropped,invert_mask(cropped_mask)
+        # return cropped, cropped_mask
+        return mask,cropped
+    return labels, mask
 
 
 def show_prediction(model, image_path, size=256, threshold=0.5):
