@@ -100,6 +100,8 @@ if __name__ == "__main__":
     )
     # if args.train:
     #     train = args.train
+
+    pdb.set_trace()
     if args.directory:
         # for image in glob.glob(args.directory):
         #     print(image)

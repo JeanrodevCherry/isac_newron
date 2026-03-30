@@ -98,11 +98,11 @@ class EdgeAwareLoss(torch.nn.Module):
         )
 
         # Erode and dilate to isolate boundary region
-        dilated = F.conv2d(
+        dilated = torch.nn.functional.conv2d(
             targets, kernel, padding=self.boundary_dilation
         ).clamp(0, 1)
 
-        eroded = 1 - F.conv2d(
+        eroded = 1 - torch.nn.functional.conv2d(
             1 - targets, kernel, padding=self.boundary_dilation
         ).clamp(0, 1)
 
@@ -153,11 +153,11 @@ class EdgeAwareLoss(torch.nn.Module):
         target_edges = self._compute_edges(targets)
 
         # L1 gradient matching on edges
-        gradient_loss = F.l1_loss(pred_edges, target_edges)
+        gradient_loss = torch.nn.functional.l1_loss(pred_edges, target_edges)
 
         # BCE weighted by boundary mask — harder penalty near boundaries
         boundary_mask = self._get_boundary_mask(targets)
-        boundary_bce = F.binary_cross_entropy(
+        boundary_bce = torch.nn.functional.binary_cross_entropy(
             preds * boundary_mask, targets * boundary_mask, reduction="sum"
         ) / (boundary_mask.sum() + self.smooth)
 
