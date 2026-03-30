@@ -6,6 +6,7 @@ import numpy as np
 from tqdm import tqdm
 import tifffile
 from src.porosity import CompactnessLoss
+from src.segmentation import EdgeAwareLoss
 
 
 # -----------------------
@@ -182,12 +183,13 @@ def train_model(
     """
     dataset = PatternDataset(img_dir, mask_dir)
     loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
-
     model = SmallUNet()
-    # loss_fn = nn.BCELoss()
-    loss_fn = BCEDiceCompactLoss()
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
+    if model_path == "pattern_model.pt":
+        loss_fn = BCEDiceCompactLoss()
 
+    elif model_path == "segmentation_model.pt":
+        loss_fn = EdgeAwareLoss()
+    optimizer = torch.optim.Adam(model.parameters(), lr=lr)
     for epoch in range(epochs):
         model.train()
         total = 0
@@ -274,7 +276,14 @@ def predict_and_crop(
     return cropped
 
 
-def parse_image(model, image_path, size=256, threshold=0.5, expand_ratio=1.05,model_type="cropper"):
+def parse_image(
+    model,
+    image_path,
+    size=256,
+    threshold=0.5,
+    expand_ratio=1.05,
+    model_type="cropper",
+):
     """
     Predict mask and crop around the *largest connected region*.
     - Keeps only the largest component.
@@ -311,7 +320,7 @@ def parse_image(model, image_path, size=256, threshold=0.5, expand_ratio=1.05,mo
     if num_labels <= 1:
         print("⚠️ No pattern detected.")
         return img
-    if model_type=="cropper":
+    if model_type == "cropper":
         # --- Select largest region (ignore background index 0) ---
         largest_idx = 1 + np.argmax(stats[1:, cv2.CC_STAT_AREA])
         x, y, bw, bh, area = stats[largest_idx]
@@ -328,7 +337,7 @@ def parse_image(model, image_path, size=256, threshold=0.5, expand_ratio=1.05,mo
         cropped_mask = mask[y1:y2, x1:x2]
         # return cropped,invert_mask(cropped_mask)
         # return cropped, cropped_mask
-        return mask,cropped
+        return mask, cropped
     return labels, mask
 
 
