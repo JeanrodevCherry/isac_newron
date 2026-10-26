@@ -5,6 +5,9 @@ import numpy as np
 from src.isac_newron import train_model, predict_and_crop, SmallUNet, show_prediction, parse_image, extract_state_dict
 import argparse
 import sys
+from pathlib import Path
+import glob
+# from glob import glob
 
 def main(model_path="pattern_model.pt",image_path="data/images/Plate_A_A2_Region1_Merged_ch00.jpg"):
     # train_model("data/images", "data/masks", epochs=100)
@@ -33,7 +36,7 @@ def resize_for_display(image, max_width=1200, max_height=1000):
     new_h = int(h * scale)
     return cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
-def predict_one(model_path,image_path):
+def predict_one(model_path,image_path, output_path=None):
     # if not os.path.exists(model_path):
     #     train_model("data/images", "data/masks", epochs=50)
     # model = torch.load(model_path)
@@ -63,22 +66,49 @@ def predict_one(model_path,image_path):
         label = np.zeros_like(crop, dtype=np.float32)
 
     overlay, mask_vis = build_overlay(crop, label)
-
+    if not output_path:
+        path_ = Path(image_path).resolve()
+        output_path = path_.with_stem(path_.stem + "_pattern_mask").with_suffix(".tif")
+    # else:
+    #     output_path = "mask.tif"
+    print(output_path)
     cv2.imwrite("cropped_result.jpg", crop)
-    cv2.imwrite("mask.tif", label)
+    cv2.imwrite(output_path, label)
     cv2.imwrite("overlay_result.jpg", overlay)
 
     # cv2.imshow("Output", resize_for_display(crop))
-    cv2.imshow("Mask Overlay", resize_for_display(overlay, 1299, 1000))
+    # cv2.imshow("Mask Overlay", resize_for_display(overlay, 1299, 1000))
     # cv2.imshow("Mask", resize_for_display(mask_vis))
-    cv2.waitKey(0)
-    cv2.destroyAllWindows()
+    # cv2.waitKey(0)
+    # cv2.destroyAllWindows()
+
 
 if __name__=="__main__":
     model_path = "pattern_model.pt"
+    segmentation_model_path = "spheroid_model.pt"
     parser = argparse.ArgumentParser("Crazy Cropper with its two newrons")
-    parser.add_argument("-filename",default="./data/images/data/images/D03_A1_Region1_ch00.jpg",required=False)
+    # parser.add_argument("-filename",default="./data/images/data/images/D03_A1_Region1_ch00.jpg",required=False)
+    parser.add_argument("--train",action="store_true",help="Train segmentation model")
+    parser.add_argument("--segment",action="store_true",help="Segment")
     args = parser.parse_args()
 
-    if args.filename:
-        main(model_path,args.filename)
+    # if args.filename:
+    #     main(model_path,args.filename)
+    # if args.train:
+    #     train_segmentation_model(model_path=segmentation_model_path)
+    
+    import pdb
+    
+    if args.segment or args.train:
+    #     if args.filename:
+    #         main(model_path,args.filename)
+            # segment_filename(model_path)
+        # if not args.filename:
+        segmentation_dir = "data/segmentation/images/"
+        segmentation_mask_dir =  "data/segmentation/masks/"
+        # for file in Path(segmentation_dir).glob(".jpg"):
+        for file in sorted(glob.glob(os.path.join(segmentation_dir, "*.jpg"))):
+            # pdb.set_trace()
+            stem = Path(file).with_stem(Path(file).stem + "_pattern_mask").stem
+            filename = (Path(segmentation_mask_dir) / stem).with_suffix(".tif")
+            predict_one(model_path=model_path,image_path=file,output_path=filename)
