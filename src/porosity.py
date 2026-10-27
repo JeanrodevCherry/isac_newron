@@ -1,4 +1,5 @@
 import torch
+import torch.nn as nn
 import torch.nn.functional as F
 
 class CompactnessLoss(torch.nn.Module):
@@ -112,3 +113,57 @@ class BCETverskyBoundaryNoHoleLoss(torch.nn.Module):
             + self.boundary_weight * boundary
             + self.no_hole_weight * no_hole
         )
+class BoundaryAwareSegLoss(torch.nn.Module):
+    def __init__(self):
+        super().__init__()
+        self.loss = BCETverskyBoundaryNoHoleLoss(
+            tversky_weight=1.0,
+            boundary_weight=1.2,
+            no_hole_weight=1.8,
+        )
+
+    def forward(self, preds, targets):
+        return self.loss(preds, targets)
+
+class DiceBCELoss(nn.Module):
+    """Combined Dice + BCE loss, robust to sparse small targets like spheroids."""
+
+    def __init__(self, dice_weight=1.0, bce_weight=1.0, smooth=1.0, pos_weight=None):
+        super().__init__()
+        self.dice_weight = dice_weight
+        self.bce_weight = bce_weight
+        self.smooth = smooth
+        # pos_weight > 1 boosts recall on the (sparse) spheroid pixels
+        self.bce = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+
+    def forward(self, logits, target):
+        bce_loss = self.bce(logits, target)
+
+        probs = torch.sigmoid(logits)
+        dims = (0, 2, 3)  # sum over batch and spatial dims
+        intersection = (probs * target).sum(dims)
+        cardinality = probs.sum(dims) + target.sum(dims)
+        dice_loss = 1.0 - ((2.0 * intersection + self.smooth) / (cardinality + self.smooth)).mean()
+
+        return self.dice_weight * dice_loss + self.bce_weight * bce_loss
+
+
+class BorderAwareBCEDiceLoss(nn.Module):
+    """BCE (up-weighted in a band around the mask border) + Dice + edge consistency."""
+
+    def __init__(self, border_weight=4.0, band=7, dice_weight=1.0, edge_weight=1.0):
+        super().__init__()
+        self.border_weight, self.band = border_weight, band
+        self.dice_weight, self.edge_weight = dice_weight, edge_weight
+        self.edge = EdgeConsistencyLoss()
+
+    def forward(self, logits, target):
+        pad = self.band // 2
+        dil = F.max_pool2d(target, self.band, 1, pad)
+        ero = -F.max_pool2d(-target, self.band, 1, pad)
+        weight = 1.0 + self.border_weight * (dil - ero)
+        bce = (F.binary_cross_entropy_with_logits(logits, target, reduction="none") * weight).mean()
+        probs = torch.sigmoid(logits)
+        inter = (probs * target).sum((1, 2, 3))
+        dice = 1.0 - ((2 * inter + 1) / (probs.sum((1, 2, 3)) + target.sum((1, 2, 3)) + 1)).mean()
+        return bce + self.dice_weight * dice + self.edge_weight * self.edge(probs, target)

@@ -2,28 +2,23 @@ import os
 import torch
 import cv2
 import numpy as np
-from src.isac_newron import train_model, predict_and_crop, SmallUNet, show_prediction, parse_image, extract_state_dict
+# from src.isac_newron import train_model, predict_and_crop, SmallUNet, show_prediction, parse_image, extract_state_dict, train_segmentation_model, segment_image
+
 import argparse
 import sys
 from pathlib import Path
 import glob
 # from glob import glob
 
+from src.isac_newron import predict_and_crop, parse_image
+from src.segmentation import train_segmentation_model, segment_image
+from src.models import SmallUNet, extract_state_dict
+from src.toolkit import build_overlay
+
 def main(model_path="pattern_model.pt",image_path="data/images/Plate_A_A2_Region1_Merged_ch00.jpg"):
     # train_model("data/images", "data/masks", epochs=100)
     predict_one(model_path=model_path,image_path=image_path)
 
-
-def build_overlay(image_gray, mask_prob, threshold=0.5, alpha=0.45):
-    image_bgr = cv2.cvtColor(image_gray, cv2.COLOR_GRAY2BGR)
-    mask_bin = (mask_prob > threshold).astype(np.uint8)
-
-    colored = image_bgr.copy()
-    colored[mask_bin > 0] = (0, 0, 255)
-    overlay = cv2.addWeighted(colored, alpha, image_bgr, 1.0 - alpha, 0)
-
-    mask_vis = (mask_bin * 255).astype(np.uint8)
-    return overlay, mask_vis
 
 
 def resize_for_display(image, max_width=1200, max_height=1000):
@@ -37,10 +32,6 @@ def resize_for_display(image, max_width=1200, max_height=1000):
     return cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
 def predict_one(model_path,image_path, output_path=None):
-    # if not os.path.exists(model_path):
-    #     train_model("data/images", "data/masks", epochs=50)
-    # model = torch.load(model_path)
-
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     model = SmallUNet().to(device)
     if not os.path.exists(model_path):
@@ -85,9 +76,9 @@ def predict_one(model_path,image_path, output_path=None):
 
 if __name__=="__main__":
     model_path = "pattern_model.pt"
-    segmentation_model_path = "spheroid_model.pt"
+    segmentation_model_path = "segmentation_model.pt"
     parser = argparse.ArgumentParser("Crazy Cropper with its two newrons")
-    # parser.add_argument("-filename",default="./data/images/data/images/D03_A1_Region1_ch00.jpg",required=False)
+    parser.add_argument("-filename",default="./data/segmentation/images/Plate_1_D26_A1 Region1_Merged_ch00.jpg",required=False)
     parser.add_argument("--train",action="store_true",help="Train segmentation model")
     parser.add_argument("--segment",action="store_true",help="Segment")
     args = parser.parse_args()
@@ -100,15 +91,14 @@ if __name__=="__main__":
     import pdb
     
     if args.segment or args.train:
-    #     if args.filename:
-    #         main(model_path,args.filename)
-            # segment_filename(model_path)
-        # if not args.filename:
         segmentation_dir = "data/segmentation/images/"
         segmentation_mask_dir =  "data/segmentation/masks/"
-        # for file in Path(segmentation_dir).glob(".jpg"):
         for file in sorted(glob.glob(os.path.join(segmentation_dir, "*.jpg"))):
-            # pdb.set_trace()
-            stem = Path(file).with_stem(Path(file).stem + "_pattern_mask").stem
+            stem = Path(file).stem
             filename = (Path(segmentation_mask_dir) / stem).with_suffix(".tif")
             predict_one(model_path=model_path,image_path=file,output_path=filename)
+        if args.train:
+            model = train_segmentation_model(segmentation_dir,segmentation_dir,segmentation_mask_dir,model_path=segmentation_model_path)
+        if args.segment:
+            print(args.filename)
+            segment_image(segmentation_model_path,Path(args.filename))
