@@ -10,9 +10,7 @@ from pathlib import Path
 import glob
 # from glob import glob
 
-from src.isac_newron import predict_and_crop, parse_image
 from src.segmentation import train_segmentation_model, segment_image
-from src.models import SmallUNet, extract_state_dict
 from src.toolkit import build_overlay
 
 def main(model_path="pattern_model.pt",image_path="data/images/Plate_A_A2_Region1_Merged_ch00.jpg"):
@@ -31,47 +29,35 @@ def resize_for_display(image, max_width=1200, max_height=1000):
     new_h = int(h * scale)
     return cv2.resize(image, (new_w, new_h), interpolation=cv2.INTER_AREA)
 
-def predict_one(model_path,image_path, output_path=None):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = SmallUNet().to(device)
-    if not os.path.exists(model_path):
-        train_model("data/images", "data/masks", epochs=50)
+def predict_one(model_path, image_path, output_path=None):
+    """Run the pattern model on one image and save crop, mask and overlay."""
+    from src.models import load_pattern_model
+    from src.toolkit import pattern_region
 
-    loaded = torch.load(model_path, map_location=device)
-    model.load_state_dict(extract_state_dict(loaded))
+    model, loaded, _ = load_pattern_model(model_path)
+    quality = loaded.get("training_quality", {}) if isinstance(loaded, dict) else {}
+    if quality:
+        print(f"📊 Trained model quality -> final: {quality.get('final_train_loss')}, "
+              f"best: {quality.get('best_train_loss')} (epoch {quality.get('best_epoch')})")
 
-    if isinstance(loaded, dict) and "training_quality" in loaded:
-        quality = loaded["training_quality"]
-        final_loss = quality.get("final_train_loss")
-        best_loss = quality.get("best_train_loss")
-        best_epoch = quality.get("best_epoch")
-        print(f"📊 Trained model quality -> final: {final_loss}, best: {best_loss} (epoch {best_epoch})")
-
-    model.eval()
-
-    parsed = parse_image(model, image_path)
-    if isinstance(parsed, tuple):
-        crop, label = parsed
-    else:
-        crop = parsed
-        label = np.zeros_like(crop, dtype=np.float32)
-
-    overlay, mask_vis = build_overlay(crop, label)
+    img = cv2.imread(str(image_path), cv2.IMREAD_GRAYSCALE)
+    if img is None:
+        raise FileNotFoundError(image_path)
+    pmask, box, _ = pattern_region(model, img)
+    if pmask is None:
+        print("⚠️ No pattern detected.")
+        return
+    x1, y1, x2, y2 = box
+    crop = (img * pmask)[y1:y2, x1:x2]
+    label = pmask[y1:y2, x1:x2].astype(np.float32)
+    overlay, _ = build_overlay(crop, label)
     if not output_path:
         path_ = Path(image_path).resolve()
         output_path = path_.with_stem(path_.stem + "_pattern_mask").with_suffix(".tif")
-    # else:
-    #     output_path = "mask.tif"
     print(output_path)
     cv2.imwrite("cropped_result.jpg", crop)
-    cv2.imwrite(output_path, label)
+    cv2.imwrite(str(output_path), (label * 255).astype(np.uint8))
     cv2.imwrite("overlay_result.jpg", overlay)
-
-    # cv2.imshow("Output", resize_for_display(crop))
-    # cv2.imshow("Mask Overlay", resize_for_display(overlay, 1299, 1000))
-    # cv2.imshow("Mask", resize_for_display(mask_vis))
-    # cv2.waitKey(0)
-    # cv2.destroyAllWindows()
 
 
 if __name__=="__main__":
@@ -88,17 +74,12 @@ if __name__=="__main__":
     # if args.train:
     #     train_segmentation_model(model_path=segmentation_model_path)
     
-    import pdb
-    
-    if args.segment or args.train:
+    if args.train:
         segmentation_dir = "data/segmentation/images/"
-        segmentation_mask_dir =  "data/segmentation/masks/"
-        for file in sorted(glob.glob(os.path.join(segmentation_dir, "*.jpg"))):
-            stem = Path(file).stem
-            filename = (Path(segmentation_mask_dir) / stem).with_suffix(".tif")
-            predict_one(model_path=model_path,image_path=file,output_path=filename)
-        if args.train:
-            model = train_segmentation_model(segmentation_dir,segmentation_dir,segmentation_mask_dir,model_path=segmentation_model_path)
-        if args.segment:
-            print(args.filename)
-            segment_image(segmentation_model_path,Path(args.filename))
+        train_segmentation_model(segmentation_dir, segmentation_dir,
+                                 model_path=segmentation_model_path)
+    if args.segment:
+        print(args.filename)
+        segment_image(segmentation_model_path, Path(args.filename))
+    if not (args.train or args.segment):
+        predict_one(model_path, args.filename)
