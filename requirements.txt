@@ -7,3 +7,5 @@ numpy
 opencv-python
 tqdm
 tifffile
+pandas
+openpyxl

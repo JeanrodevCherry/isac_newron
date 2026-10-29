@@ -1,6 +1,9 @@
 import cv2
 import numpy as np
 import torch
+import warnings
+
+
 def build_overlay(image_gray, mask_prob, threshold=0.5, alpha=0.45):
     image_bgr = cv2.cvtColor(image_gray, cv2.COLOR_GRAY2BGR)
     mask_bin = (mask_prob > threshold).astype(np.uint8)
@@ -40,3 +43,15 @@ def pattern_region(pattern_model, img, size=None, threshold=0.5, expand_ratio=1.
     r = int(max(bw, bh) * expand_ratio / 2)
     box = (max(0, cx - r), max(0, cy - r), min(w, cx + r), min(h, cy + r))
     return mask, box, prob
+
+
+def format_day(day:str):
+    """From DXX to XX as int"""
+    if day is None or day in (""," "):# soft replace None
+        warnings.warn("day to format not found, put 1")
+        return 1
+    if len(day)!=3:# hard stop formatting error
+        raise ValueError(f"Could not convert Day {day} to valid day")
+    num_day = int(day[1:])
+    # print(f"formatting the day {day} to {num_day}")
+    return num_day

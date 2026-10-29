@@ -7,6 +7,7 @@ from tqdm import tqdm
 import tifffile
 from pathlib import Path
 from datetime import datetime, timezone
+from typing import Tuple
 
 from src.models import SpheroidUNet, load_pattern_model, load_spheroid_model
 from src.toolkit import build_overlay, pattern_region
@@ -19,7 +20,7 @@ SPHEROID_SIZE = 512
 def train_segmentation_model(
     img_dir,
     json_dir,
-    mask_dir=None,          # honeycomb masks (TIF) for channel 2; optional
+    mask_dir=None,  # honeycomb masks (TIF) for channel 2; optional
     epochs=25,
     lr=1e-3,
     batch_size=2,
@@ -67,8 +68,12 @@ def train_segmentation_model(
     pattern_model.to(device)
     with torch.no_grad():
         dataset = SpheroidDataset(
-            img_dir, json_dir, honeycomb_mask_dir=mask_dir, size=SPHEROID_SIZE,
-            augment=augment, pattern_model=pattern_model,
+            img_dir,
+            json_dir,
+            honeycomb_mask_dir=mask_dir,
+            size=SPHEROID_SIZE,
+            augment=augment,
+            pattern_model=pattern_model,
         )
     if len(dataset) == 0:
         raise RuntimeError(
@@ -89,7 +94,9 @@ def train_segmentation_model(
         pos_weight=torch.tensor([5.0]),
     ).to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)
-    scaler = torch.amp.GradScaler("cuda", enabled=use_cuda) if use_cuda else None
+    scaler = (
+        torch.amp.GradScaler("cuda", enabled=use_cuda) if use_cuda else None
+    )
 
     lr_drop_epoch = 50
     lr_after_drop = 1e-4
@@ -101,7 +108,9 @@ def train_segmentation_model(
         if epoch == lr_drop_epoch:
             for param_group in optimizer.param_groups:
                 param_group["lr"] = lr_after_drop
-            print(f"🔁 Learning rate changed to {lr_after_drop} at epoch {epoch+1}")
+            print(
+                f"🔁 Learning rate changed to {lr_after_drop} at epoch {epoch+1}"
+            )
 
         model.train()
         total = 0.0
@@ -113,7 +122,7 @@ def train_segmentation_model(
 
             if use_cuda:
                 with torch.amp.autocast(device_type="cuda", enabled=True):
-                    pred = model(x)          # logits (no sigmoid!)
+                    pred = model(x)  # logits (no sigmoid!)
                     loss = loss_fn(pred, y)
                 scaler.scale(loss).backward()
                 scaler.step(optimizer)
@@ -153,7 +162,7 @@ def train_segmentation_model(
             "batch_size": int(batch_size),
             "augment": bool(augment),
             "device": str(device),
-            "loss": "DiceBCELoss",          # was BCETverskyBoundaryNoHoleLoss (stale)
+            "loss": "DiceBCELoss",  # was BCETverskyBoundaryNoHoleLoss (stale)
         },
         "saved_at_utc": datetime.now(timezone.utc).isoformat(),
     }
@@ -184,7 +193,11 @@ def predict_spheroid_prob(model, crop, pattern_crop, size=SPHEROID_SIZE):
     """Spheroid probability map (crop resolution) from a denoised crop + pattern gate."""
     ch, cw = crop.shape
     img = cv2.resize(crop, (size, size), interpolation=cv2.INTER_AREA)
-    hc = cv2.resize(pattern_crop.astype(np.float32), (size, size), interpolation=cv2.INTER_NEAREST)
+    hc = cv2.resize(
+        pattern_crop.astype(np.float32),
+        (size, size),
+        interpolation=cv2.INTER_NEAREST,
+    )
     x = torch.from_numpy(np.stack([img.astype(np.float32) / 255.0, hc]))[None]
     x = x.to(next(model.parameters()).device)
     with torch.no_grad():
@@ -192,10 +205,15 @@ def predict_spheroid_prob(model, crop, pattern_crop, size=SPHEROID_SIZE):
     return cv2.resize(prob, (cw, ch), interpolation=cv2.INTER_LINEAR)
 
 
-def apply_segmentation_model_to_image(model_path, image_path, size=SPHEROID_SIZE,
-                                      threshold=0.5, expand_ratio=1.15,
-                                      pattern_model_path="pattern_model.pt",
-                                      device=None):
+def apply_segmentation_model_to_image(
+    model_path,
+    image_path,
+    size=SPHEROID_SIZE,
+    threshold=0.5,
+    expand_ratio=1.15,
+    pattern_model_path="pattern_model.pt",
+    device=None,
+):
     """Pattern model (denoise + crop) -> spheroid model. Returns (denoised crop, probability map)."""
     if device is None:
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -206,18 +224,51 @@ def apply_segmentation_model_to_image(model_path, image_path, size=SPHEROID_SIZE
 
     pattern_model, _, _ = load_pattern_model(pattern_model_path)
     pattern_model.to(device)
-    pmask, box, _ = pattern_region(pattern_model, img, threshold=threshold,
-                                   expand_ratio=expand_ratio)
+    pmask, box, _ = pattern_region(
+        pattern_model, img, threshold=threshold, expand_ratio=expand_ratio
+    )
     if pmask is None:
-        print("⚠️ Pattern model found no valid region — check image/illumination.")
+        print(
+            "⚠️ Pattern model found no valid region — check image/illumination."
+        )
         return img, np.zeros(img.shape, dtype=np.float32)
 
     x1, y1, x2, y2 = box
     denoised = (img * pmask)[y1:y2, x1:x2]
     model, _, _ = load_spheroid_model(model_path=model_path)
     model.to(device)
-    prob = predict_spheroid_prob(model, denoised, pmask[y1:y2, x1:x2], size=size)
+    prob = predict_spheroid_prob(
+        model, denoised, pmask[y1:y2, x1:x2], size=size
+    )
     return denoised, prob
+
+
+def remove_close_spheroids(
+    mask: np.ndarray, crop: np.ndarray, ratio_dist_threshold: float = 0.4
+):
+    """Split touching spheroids with a watershed. Returns int32 labels (0 = background, 1..n)."""
+    mask = mask.astype(np.uint8)
+    dist = cv2.distanceTransform(mask, cv2.DIST_L2, 5)
+    n, markers = cv2.connectedComponents(
+        (dist > ratio_dist_threshold * dist.max()).astype(np.uint8)
+    )
+    markers[mask == 0] = n  # background marker
+    labels = cv2.watershed(
+        cv2.cvtColor(crop, cv2.COLOR_GRAY2BGR), markers.astype(np.int32)
+    )
+    labels[(labels == n) | (labels < 0)] = 0
+    return labels
+
+
+def remove_holes(mask: np.ndarray):
+    """Fill holes inside each spheroid."""
+    filled = np.zeros(mask.shape, np.uint8)
+    cs, _ = cv2.findContours(
+        mask.astype(np.uint8), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+    )
+    cv2.drawContours(filled, cs, -1, 1, cv2.FILLED)
+    return filled
+
 
 def segment_image(model_path, image_path, output_path=None):
     crop, label = apply_segmentation_model_to_image(model_path, image_path)
