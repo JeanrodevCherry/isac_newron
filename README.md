@@ -60,7 +60,7 @@ source ./venv/Scripts/activate #windows
 ```bash
 python ./__init__.py -filename "<image.jpg>"             # pattern only: cropped_result.jpg, overlay_result.jpg, mask
 python ./__init__.py --segment -filename "<image.jpg>"    # full pipeline -> <image>_segmented.tif
-python ./__init__.py --train                              # retrain the spheroid model on data/segmentation/images
+python train_pipeline.py --model segmentation            # retrain the spheroid model
 ```
 
 From Python: `from src.segmentation import segment_image` -> `crop, probability_map = segment_image("segmentation_model.pt", path)`.
@@ -81,14 +81,17 @@ Make sure they are loaded with lfs. The pattern checkpoint stores its architectu
 ### Pattern model
 
 ```bash
-python train_pattern.py --epochs 30 --size 384 --out pattern_model.pt   # progress bars via tqdm
-python train_pattern.py --val --out /tmp/p.pt                            # hold out 5 images, compare with current model
+python train_pipeline.py --model pattern --epochs 30 --size 384 --out pattern_model.pt
+python train_pipeline.py --model pattern --val --out /tmp/p.pt  # hold out 5 images and compare with current model
 ```
 
 `src/pattern.py` trains `PatternUNet` with a border-aware loss (BCE weighted around the mask edge + Dice + edge
 consistency). `PatternDataset` augments every sample on the fly: flips, rotations, scale/translation, brightness/contrast,
 vignetting, gamma, blur, noise and random debris-like patches. On 5 held-out images IoU went 0.87 -> 0.98 and
 border F-score 0.85 -> 0.995 versus the previous `SmallUNet`.
+
+Pattern training reads `data/noise_filter/images` and `data/noise_filter/masks_refined` by default. Override these with
+`--pattern-img-dir` and `--pattern-mask-dir`.
 
 ### Labelling spheroids automatically
 
@@ -104,8 +107,15 @@ QA sheet: `debug_out/label_sheet.jpg`. The automatic labels reach IoU 0.81-0.91 
 
 ### Spheroid model
 
-`python ./__init__.py --train` (or `train_segmentation_model` in `src/segmentation.py`). Training samples are built
-exactly as at inference (pattern model, denoise, crop).
+```bash
+python train_pipeline.py --model segmentation --epochs 25 --out segmentation_model.pt
+```
+
+By default, segmentation training reads images and labelme JSONs from `data/segmentation/images` and uses
+`pattern_model.pt` to prepare training samples exactly as at inference (pattern model, denoise, crop). Use
+`--segmentation-img-dir`, `--segmentation-json-dir`, `--segmentation-mask-dir`, and `--pattern-model` to override
+those paths. Both training modes accept `--epochs`, `--batch-size`, `--lr`, and `--out`; `--size` and `--val` apply
+to pattern training.
 
 ## Testing
 
