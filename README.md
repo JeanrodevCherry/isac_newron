@@ -123,8 +123,8 @@ to pattern training.
 python test_pipeline.py                      # all images
 python test_pipeline.py --holdout <stem> ... # evaluate only images not used in training
 python validate_pipeline.py                  # quick 7-step visual panels
-# --um-per-px 1.3 (default, 5x) sets the pixel size used for the xlsx areas/diameters;
-# a warning is printed when the detected pattern is narrower than --min-pattern-mm (1.0)
+# Pixel size per image = --pattern-um (6000) / detected pattern width in px (exports have different resolutions);
+# --um-per-px overrides it with a fixed value. A warning is printed when the pattern is narrower than --min-pattern-mm (1.0)
 ```
 
 `test_pipeline.py` checks (1) pattern IoU/border F-score, (2) the pattern crop contains all labelled spheroids,
@@ -135,5 +135,5 @@ On 6 held-out images the spheroid model gets mean IoU 0.89 / Dice 0.94.
 
 Example of pipeline testing
 ```bash
-python validate_pipeline.py --images /home/jpeiteado/Bureau/pripri_tmp/lebeling_test/testimages/ --um-per-px 1.3
+python validate_pipeline.py --images /home/jpeiteado/Bureau/pripri_tmp/lebeling_test/testimages/
 ```

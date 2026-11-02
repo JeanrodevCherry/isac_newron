@@ -55,3 +55,15 @@ def format_day(day:str):
     num_day = int(day[1:])
     # print(f"formatting the day {day} to {num_day}")
     return num_day
+
+def remove_small_objects(mask: np.ndarray,min_area_px: float):
+    result = mask.copy()
+
+    ids, counts = np.unique(mask, return_counts=True)
+
+    for label_id, area in zip(ids, counts):
+        if label_id != 0 and area < min_area_px:
+            result[mask == label_id] = 0
+
+    return result
+    # return mask

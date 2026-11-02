@@ -9,7 +9,7 @@ import numpy as np
 from src.datasets import SpheroidDataset
 from src.models import load_pattern_model, load_spheroid_model
 from src.segmentation import predict_spheroid_prob, remove_close_spheroids, remove_holes
-from src.toolkit import format_day, pattern_region
+from src.toolkit import format_day, pattern_region, remove_small_objects
 
 
 def parse_name(name):
@@ -23,6 +23,8 @@ def parse_name(name):
         extract(r"(?<![A-Za-z0-9])([A-D][1-6])(?![0-9])"),
     )
 
+PATTERN_UM = 6000
+MIN_AREA_SPHEROID_PX = 600.0
 
 def label_rows(labels, image_number, path, um_per_px):
     plate, day, well = parse_name(path.name)
@@ -53,7 +55,7 @@ def tile(img, title, width=380):
 
 
 def validate(images_dir, pattern_path, model_path, output_dir, threshold=0.5,
-             um_per_px=1.3, min_pattern_mm=1.0, show_segmented=False):
+             um_per_px=None, min_pattern_mm=1.0, show_segmented=False, pattern_um=PATTERN_UM,min_area_spheroid_px=MIN_AREA_SPHEROID_PX):
     images_dir, output_dir = Path(images_dir), Path(output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
     pattern_model, _, _ = load_pattern_model(pattern_path)
@@ -78,10 +80,15 @@ def validate(images_dir, pattern_path, model_path, output_dir, threshold=0.5,
         )
         probability = predict_spheroid_prob(spheroid_model, denoised, crop_mask)
         predicted = probability > threshold
+        # import pdb
+        # pdb.set_trace()
         labels = remove_close_spheroids(remove_holes(predicted), denoised)
-        object_rows.extend(label_rows(labels, image_number, image_path, um_per_px))
+        correct_size_labels = remove_small_objects(labels,min_area_px=min_area_spheroid_px)
         crop_width, crop_height = x2 - x1, y2 - y1
-        pattern_width_mm = crop_width * um_per_px / 1000
+        # exports differ in resolution, so by default the scale comes from the known pattern width
+        scale = um_per_px if um_per_px else pattern_um / crop_width
+        object_rows.extend(label_rows(correct_size_labels, image_number, image_path, scale))
+        pattern_width_mm = crop_width * scale / 1000
         iou = dice = np.nan
         gt_count = pred_count = 0
         if ground_truth is not None:
@@ -93,7 +100,7 @@ def validate(images_dir, pattern_path, model_path, output_dir, threshold=0.5,
             pred_count = cv2.connectedComponents(predicted.astype(np.uint8))[0] - 1
 
         msg = (f"{image_path.name}: pattern_cover={pattern_mask.mean():.3f} "
-               f"crop={crop_width}x{crop_height} pattern_width={pattern_width_mm:.2f} mm "
+               f"crop={crop_width}x{crop_height} pattern_width={pattern_width_mm:.2f} mm um_per_px={scale:.3f} "
                f"threshold={threshold:.2f} IoU={iou:.3f} Dice={dice:.3f}")
         if ground_truth is not None:
             msg += f" spheroids GT/pred={gt_count}/{pred_count}"
@@ -135,13 +142,16 @@ def main():
     parser.add_argument("--model", default="segmentation_model.pt")
     parser.add_argument("--out", default="debug_out")
     parser.add_argument("--threshold", type=float, default=0.5)
-    parser.add_argument("--um-per-px", type=float, default=1.3,
-                        help="pixel size in um (Leica Thunder, 5x, 6.5 um sensor pixel)")
+    parser.add_argument("--um-per-px", type=float, default=None,
+                        help="fixed pixel size in um; default: --pattern-um / detected pattern width per image")
+    parser.add_argument("--pattern-um", type=float, default=PATTERN_UM,
+                        help="physical pattern width in um (default 6000)")
     parser.add_argument("--min-pattern-mm", type=float, default=1.0)
+    parser.add_argument("--min-area-spheroid-px", type=float, default=300.0)
     parser.add_argument("--show-segmented", action="store_true")
     args = parser.parse_args()
     validate(args.images, args.pattern, args.model, args.out, args.threshold,
-             args.um_per_px, args.min_pattern_mm, args.show_segmented)
+             args.um_per_px, args.min_pattern_mm, args.show_segmented, args.pattern_um, args.min_area_spheroid_px)
 
 
 if __name__ == "__main__":
