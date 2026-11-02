@@ -133,7 +133,10 @@ if a mean IoU is under its threshold (`--pattern-iou 0.9`, `--spheroid-iou 0.6`)
 On 6 held-out images the spheroid model gets mean IoU 0.89 / Dice 0.94.
 
 
-Example of pipeline testing
+Example of pipeline testing:
+1. Simple ouput in debug_out
+2. External dir and show segmentation && min area spheroids
 ```bash
 python validate_pipeline.py --images /home/jpeiteado/Bureau/pripri_tmp/lebeling_test/testimages/
+python validate_pipeline.py --images ~/Bureau/pripri_tmp/NOVO_11_02_plate_1/input_QC/ --show-segmented --out /home/jpeiteado/Bureau/pripri_tmp/temp/ --min-area-spheroid-px 600
 ```
