@@ -17,7 +17,7 @@ MIN_SPHEROIDS, MAX_SPHEROIDS = 30, 70
 
 
 def mask_path(stem):
-    return glob.glob(str(NF / "masks" / (glob.escape(stem) + "_label.tif*")))[0]
+    return str(NF / "masks" / f"{stem}.tif")
 
 
 def coarse_box(stem, shape):

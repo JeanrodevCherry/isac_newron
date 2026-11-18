@@ -153,13 +153,16 @@ class PatternDataset(Dataset):
 
     def __init__(self, img_dir, mask_dir, size=512, augment=False, names=None):
         img_paths = sorted(glob.glob(os.path.join(img_dir, "*.jpg")))
-        mask_paths = sorted(glob.glob(os.path.join(mask_dir, "*.tif*")))
+        mask_dirs = mask_dir if isinstance(mask_dir, (list, tuple)) else [mask_dir]
         self.size = size
         self.augment = augment
 
         img_keys = {os.path.splitext(os.path.basename(p))[0].replace(" ", "_"): p for p in img_paths}
-        mask_keys = {os.path.splitext(os.path.basename(p))[0].replace("_label", "").replace(" ", "_"): p
-                     for p in mask_paths}
+        mask_keys = {}
+        for directory in mask_dirs:
+            for path in sorted(glob.glob(os.path.join(directory, "*.tif*"))):
+                key = os.path.splitext(os.path.basename(path))[0].replace("_label", "").replace(" ", "_")
+                mask_keys[key] = path
         self.names = sorted(k for k in img_keys if k in mask_keys and (names is None or k in names))
         self.pairs = [(img_keys[k], mask_keys[k]) for k in self.names]
         self.cache = [self._load(*pair) for pair in self.pairs]
@@ -207,7 +210,9 @@ class PatternDataset(Dataset):
 
         img = img.astype(np.float32)
         if rng.rand() < 0.8:
-            img = img * rng.uniform(0.7, 1.4) + rng.uniform(-25, 25)
+            img = img * rng.uniform(0.7, 1.4)
+        if rng.rand() < 0.8:
+            img = img + rng.uniform(-40, 40)
         if rng.rand() < 0.3:  # vignetting / uneven illumination
             yy, xx = np.mgrid[0:S, 0:S].astype(np.float32) / S - 0.5
             gx, gy = rng.uniform(-0.6, 0.6, 2)

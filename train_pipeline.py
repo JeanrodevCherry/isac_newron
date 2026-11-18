@@ -24,7 +24,7 @@ def build_parser():
     parser.add_argument("--lr", type=float, help="learning rate")
     parser.add_argument("--out", help="checkpoint path (defaults to the selected model's standard path)")
     parser.add_argument("--pattern-img-dir", default="data/noise_filter/images")
-    parser.add_argument("--pattern-mask-dir", default="data/noise_filter/masks_refined")
+    parser.add_argument("--pattern-mask-dir", nargs="+", default=["data/noise_filter/masks_refined"])
     parser.add_argument("--segmentation-img-dir", default="data/segmentation/images")
     parser.add_argument("--segmentation-json-dir", default="data/segmentation/images")
     parser.add_argument("--segmentation-mask-dir", help="optional directory of honeycomb TIF masks")

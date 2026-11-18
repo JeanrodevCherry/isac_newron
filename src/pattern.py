@@ -33,7 +33,8 @@ def train_pattern_model(img_dir, mask_dir, epochs=150, lr=2e-3, batch_size=4, si
                         model_path="pattern_model.pt", augment=True, device=None, val_names=None):
     """Train PatternUNet. If val_names is given those images are held out and reported."""
     device = torch.device(device or ("cuda" if torch.cuda.is_available() else "cpu"))
-    all_ds = PatternDataset(img_dir, mask_dir, size=size, augment=False)
+    mask_dirs = mask_dir if isinstance(mask_dir, (list, tuple)) else [mask_dir]
+    all_ds = PatternDataset(img_dir, mask_dirs, size=size, augment=False)
     train_names = [n for n in all_ds.names if not val_names or n not in val_names]
     train_ds = all_ds.subset(train_names, augment)
     val_ds = all_ds.subset(val_names, False) if val_names else None
