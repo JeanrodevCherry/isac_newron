@@ -70,6 +70,21 @@ From Python: `from src.segmentation import segment_image` -> `crop, probability_
 `pattern_model.pt` and `segmentation_model.pt` are checkpoints (`model_state_dict`, `training_quality`, `train_config`).
 Make sure they are loaded with lfs. The pattern checkpoint stores its architecture and input size.
 
+### Performance index and provisional model selection
+
+The measured comparison currently favors `pattern_model_honeycomb_refined_v2.pt` (pattern IoU 0.98046, border F-score 0.99050) and `segmentation_model_refined_150.pt` (segmentation IoU 0.75489, Dice 0.80967). These are provisional: pattern scores use the available 26-image dataset, not an independent holdout, and supplied external QC folders do not have ground-truth annotations for measured accuracy. Training loss is not validation loss, and pixel accuracy is not a useful selection metric for sparse masks. See [MODEL_PERFORMANCE.md](MODEL_PERFORMANCE.md) for all checkpoint results, external inference diagnostics, limitations, and a validation-based selection checklist. No models have been removed.
+
+### Latest external sample comparison
+
+A seeded random sample of 10 images (seed `20261124`) from the five supplied QC folders was run through the 2 leading pattern checkpoints crossed with the 2 leading segmentation checkpoints. The panels are under `debug_out/model_comparison/<pattern>__<segmentation>/`; the sample paths are recorded in `debug_out/model_comparison/sample.txt`. Each of the four combinations has 10 diagnostic panels and a `results.xlsx`. No sampled image had a matching JSON annotation, so IoU/Dice are unavailable and this run is a visual comparison only.
+
+The sampled QIMR D3 images show the clearest recurring weakness, especially `D03_Plate_1_C5_ch00_SV.jpg` and `D03_Plate_1_C3_ch00_SV.jpg`. The pattern detector’s thresholded mask/crop is irregular or incomplete on these images; the segmentation model then receives a truncated/fragmented pattern mask as its second channel and a denoised crop that suppresses parts of the image. The source images also have strong background illumination/reflections and the detected fields differ in shape/position from the more regular NOVO and labeling-test examples. This points more toward domain/appearance and pattern-mask generalization than a segmentation-checkpoint-only failure. It is a likely explanation based on visual outputs, not a confirmed root cause: the sample has no ground truth, and the different pattern candidates do not fail identically. Inspect the cited panels and create reviewed pattern masks for representative QIMR images before changing the model or postprocessing.
+
+Example panels for the repeatedly difficult samples:
+
+- [`D03_Plate_1_C5_ch00_SV.jpg` — refined-v2 pattern + refined-150 segmentation](debug_out/model_comparison/pattern_model_honeycomb_refined_v2__segmentation_model_refined_150/D03_Plate_1_C5_ch00_SV.jpg)
+- [`D03_Plate_1_C3_ch00_SV.jpg` — refined-v2 pattern + refined-150 segmentation](debug_out/model_comparison/pattern_model_honeycomb_refined_v2__segmentation_model_refined_150/D03_Plate_1_C3_ch00_SV.jpg)
+
 ## Data layout (`data/` is git-ignored)
 
 - `data/noise_filter/images`, `data/noise_filter/masks`: images with hand-drawn pattern masks (`<stem>_label.tif`).
